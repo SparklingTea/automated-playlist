@@ -6,6 +6,10 @@ _LEADING_MARKER_RE = re.compile(r"^\s*(?:[-*•‣▪]|\(?\d+[.)])\s*")
 _QUOTE_CHARS = "\"'“”‘’"
 _DASH_SPLIT_RE = re.compile(r"\s+[-–—]\s+")
 _BY_SPLIT_RE = re.compile(r"^(.+?)\s+by\s+(.+)$", re.IGNORECASE)
+# "Title, Artist, 1985" (also "1916/17"). Only trusted with the year present,
+# since a bare comma is too common inside titles to split on.
+_COMMA_YEAR_RE = re.compile(r"^(.+?),\s*(.+?),\s*\d{4}(?:\s*/\s*\d{2,4})?\s*[.,]?$")
+_YEAR_RANGE_RE = re.compile(r"\d{4}\s+[-–—]\s+\d{4}")
 
 
 @dataclass
@@ -37,7 +41,29 @@ def _strip_line(line: str) -> str:
     return _unquote(_LEADING_MARKER_RE.sub("", line))
 
 
+def looks_like_song(line: str) -> bool:
+    """True if the line has an explicit title/artist separator."""
+    cleaned = _strip_line(line)
+    if _YEAR_RANGE_RE.search(cleaned):
+        return False
+    return bool(
+        _COMMA_YEAR_RE.match(cleaned) or _DASH_SPLIT_RE.search(cleaned) or _BY_SPLIT_RE.match(cleaned)
+    )
+
+
+def keep_song_lines(raw_text: str, min_songs: int = 3) -> str:
+    """Drops headings and other stray lines once enough lines look like songs."""
+    lines = [line for line in raw_text.splitlines() if line.strip()]
+    songs = [line for line in lines if looks_like_song(line)]
+    return "\n".join(songs if len(songs) >= min_songs else lines)
+
+
 def _parse_line(cleaned: str) -> SongQuery:
+    comma_match = _COMMA_YEAR_RE.match(cleaned)
+    if comma_match:
+        a, b = _unquote(comma_match.group(1)), _unquote(comma_match.group(2))
+        return SongQuery(raw_line=cleaned, title=a, artist=b, alt_title=b, alt_artist=a)
+
     by_match = _BY_SPLIT_RE.match(cleaned)
     dash_parts = _DASH_SPLIT_RE.split(cleaned, maxsplit=1)
 

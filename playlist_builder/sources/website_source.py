@@ -7,9 +7,13 @@ track list client-side won't produce useful output.
 import requests
 from bs4 import BeautifulSoup
 
+from playlist_builder.parser import looks_like_song
+
 USER_AGENT = "Mozilla/5.0 (compatible; PlaylistBuilder/1.0)"
 TRACK_CLASS_HINTS = ("track", "song", "title")
 MIN_STRUCTURED_CANDIDATES = 3
+MIN_SONG_LIKE_LINES = 5
+BOILERPLATE_TAGS = ["script", "style", "noscript", "nav", "header", "footer", "aside", "form"]
 
 
 def fetch_song_lines(url: str) -> str:
@@ -17,11 +21,24 @@ def fetch_song_lines(url: str) -> str:
     response.raise_for_status()
     soup = BeautifulSoup(response.content, "html.parser")
 
-    for tag in soup(["script", "style", "noscript"]):
+    for tag in soup(BOILERPLATE_TAGS):
         tag.decompose()
+    root = soup.find("main") or soup.find("article") or soup.body or soup
 
-    structured = _extract_structured(soup)
-    lines = structured if len(structured) >= MIN_STRUCTURED_CANDIDATES else _extract_from_text(soup)
+    structured = _extract_structured(root)
+    text_lines = _extract_from_text(root)
+
+    # Pages that spell out "Artist - Title" style entries: keep just those
+    # lines, dropping headings and prose, from whichever extraction has more.
+    song_like = max(
+        [line for line in structured if looks_like_song(line)],
+        [line for line in text_lines if looks_like_song(line)],
+        key=len,
+    )
+    if len(song_like) >= MIN_SONG_LIKE_LINES:
+        return "\n".join(song_like)
+
+    lines = structured if len(structured) >= MIN_STRUCTURED_CANDIDATES else text_lines
     return "\n".join(lines)
 
 
