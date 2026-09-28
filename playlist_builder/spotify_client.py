@@ -38,10 +38,8 @@ class SpotifyClient:
         return user.get("display_name") or user["id"]
 
     def create_playlist(self, name: str, public: bool = False, description: str = "") -> dict:
-        user_id = self.current_user_id()
-        return self._sp.user_playlist_create(
-            user_id, name, public=public, description=description
-        )
+        # POST /users/{id}/playlists returns 403 for dev-mode apps since Spotify's Feb 2026 API change.
+        return self._sp.current_user_playlist_create(name, public=public, description=description)
 
     def add_tracks(self, playlist_id: str, track_uris: list[str]) -> None:
         for i in range(0, len(track_uris), BATCH_SIZE):
