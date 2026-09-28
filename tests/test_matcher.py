@@ -54,3 +54,16 @@ def test_no_search_results_is_skipped():
 
     assert result.track is None
     assert result.score == 0.0
+
+
+def test_stops_searching_once_confident():
+    [query] = parse_lines("Ghost Town, The Specials, 1981")
+    client = FakeSpotifyClient({"Ghost Town": [_track("Ghost Town", "The Specials", "spotify:track:1")]})
+    searches = []
+    original = client.search_tracks
+    client.search_tracks = lambda q, limit=5: searches.append(q) or original(q, limit)
+
+    result = find_best_match(client, query)
+
+    assert result.track["uri"] == "spotify:track:1"
+    assert len(searches) == 1

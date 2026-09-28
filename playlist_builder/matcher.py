@@ -7,6 +7,9 @@ from playlist_builder.parser import SongQuery
 from playlist_builder.spotify_client import SpotifyClient
 
 MATCH_THRESHOLD = 70
+# Good enough that the remaining queries/variants can't meaningfully improve
+# on it, so skip them rather than spend more API calls.
+CONFIDENT_SCORE = 90
 
 
 @dataclass
@@ -45,6 +48,8 @@ def find_best_match(client: SpotifyClient, query: SongQuery) -> MatchResult:
                 if score > best_score:
                     best_score = score
                     best_track = track
+            if best_score >= CONFIDENT_SCORE:
+                return MatchResult(query=query, track=best_track, score=best_score)
 
     if best_track and best_score >= MATCH_THRESHOLD:
         return MatchResult(query=query, track=best_track, score=best_score)

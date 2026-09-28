@@ -21,6 +21,22 @@ state.setdefault("matches", None)
 # Per-session token so each visitor uses their own Spotify account.
 state.setdefault("token_cache", MemoryCacheHandler())
 
+@st.cache_data(ttl=24 * 3600, show_spinner=False, max_entries=20000)
+def _cached_search(_client: SpotifyClient, query: str, limit: int) -> list[dict]:
+    return _client.search_tracks(query, limit=limit)
+
+
+class CachedSearchClient:
+    """Catalog search results aren't user-specific, so re-matching an edited
+    list (or the same list by another visitor) only searches new lines."""
+
+    def __init__(self, client: SpotifyClient):
+        self._client = client
+
+    def search_tracks(self, query: str, limit: int = 5) -> list[dict]:
+        return _cached_search(self._client, query, limit)
+
+
 # --- Spotify login ---------------------------------------------------------
 try:
     auth = build_auth_manager(cache_handler=state.token_cache, open_browser=False)
@@ -99,10 +115,11 @@ if state.raw_text:
     st.write(f"**{len(queries)}** entries detected.")
 
     if st.button("Match on Spotify", type="primary", disabled=not queries):
+        search_client = CachedSearchClient(client)
         progress = st.progress(0.0, text="Searching Spotify...")
         matches = []
         for i, query in enumerate(queries, 1):
-            matches.append((query, find_best_match(client, query).track))
+            matches.append((query, find_best_match(search_client, query).track))
             progress.progress(i / len(queries), text=f"Searching Spotify... {i}/{len(queries)}")
         progress.empty()
         state.matches = matches
