@@ -1,7 +1,9 @@
 """Thin wrapper around spotipy for the operations this tool needs."""
+import requests
 import spotipy
 from spotipy.cache_handler import CacheHandler
 from spotipy.oauth2 import SpotifyOAuth
+from urllib3.util.retry import Retry
 
 from playlist_builder.config import get_spotify_credentials
 
@@ -22,9 +24,32 @@ def build_auth_manager(cache_handler: CacheHandler | None = None, open_browser: 
     )
 
 
+def _session_failing_fast_on_429() -> requests.Session:
+    # spotipy's default session sleeps for the full Retry-After on a 429,
+    # which can be hours after a burst. urllib3 retries any 429 carrying
+    # Retry-After regardless of status_forcelist, so it has to be disabled here.
+    retry = Retry(
+        total=3,
+        read=False,
+        allowed_methods=frozenset(["GET", "POST", "PUT", "DELETE"]),
+        status=3,
+        backoff_factor=0.3,
+        status_forcelist=(500, 502, 503, 504),
+        respect_retry_after_header=False,
+    )
+    session = requests.Session()
+    adapter = requests.adapters.HTTPAdapter(max_retries=retry)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    return session
+
+
 class SpotifyClient:
-    def __init__(self, auth_manager: SpotifyOAuth | None = None):
-        self._sp = spotipy.Spotify(auth_manager=auth_manager or build_auth_manager())
+    def __init__(self, auth_manager: SpotifyOAuth | None = None, wait_on_rate_limit: bool = True):
+        self._sp = spotipy.Spotify(
+            auth_manager=auth_manager or build_auth_manager(),
+            requests_session=True if wait_on_rate_limit else _session_failing_fast_on_429(),
+        )
 
     def search_tracks(self, query: str, limit: int = 5) -> list[dict]:
         results = self._sp.search(q=query, type="track", limit=limit)

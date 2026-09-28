@@ -3,6 +3,7 @@ import pytesseract
 import requests
 import streamlit as st
 from spotipy.cache_handler import MemoryCacheHandler
+from spotipy.exceptions import SpotifyException
 
 from playlist_builder.config import ConfigError
 from playlist_builder.excel_io import ExcelFormatError, from_excel, to_excel_bytes
@@ -56,11 +57,17 @@ if not auth.validate_token(state.token_cache.get_cached_token()):
     st.link_button("Log in with Spotify", auth.get_authorize_url(), type="primary")
     st.stop()
 
-client = SpotifyClient(auth_manager=auth)
+client = SpotifyClient(auth_manager=auth, wait_on_rate_limit=False)
+if "user_name" not in state:
+    try:
+        state.user_name = client.current_user_name()
+    except SpotifyException:
+        state.user_name = "your Spotify account"
 with st.sidebar:
-    st.write(f"Logged in as **{client.current_user_name()}**")
+    st.write(f"Logged in as **{state.user_name}**")
     if st.button("Log out"):
         state.token_cache = MemoryCacheHandler()
+        del state.user_name
         st.rerun()
 
 
@@ -118,9 +125,19 @@ if state.raw_text:
         search_client = CachedSearchClient(client)
         progress = st.progress(0.0, text="Searching Spotify...")
         matches = []
-        for i, query in enumerate(queries, 1):
-            matches.append((query, find_best_match(search_client, query).track))
-            progress.progress(i / len(queries), text=f"Searching Spotify... {i}/{len(queries)}")
+        try:
+            for i, query in enumerate(queries, 1):
+                matches.append((query, find_best_match(search_client, query).track))
+                progress.progress(i / len(queries), text=f"Searching Spotify... {i}/{len(queries)}")
+        except SpotifyException as e:
+            if e.http_status != 429:
+                raise
+            wait = int((e.headers or {}).get("Retry-After", 0) or 0)
+            st.warning(
+                f"Spotify's rate limit stopped matching after {len(matches)} of {len(queries)} songs"
+                + (f"; it asks to wait about {max(1, round(wait / 60))} min" if wait else "")
+                + ". Click **Match on Spotify** again after that: songs already searched are cached and won't count again."
+            )
         progress.empty()
         state.matches = matches
 
