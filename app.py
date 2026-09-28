@@ -5,6 +5,7 @@ import streamlit as st
 from spotipy.cache_handler import MemoryCacheHandler
 
 from playlist_builder.config import ConfigError
+from playlist_builder.excel_io import ExcelFormatError, from_excel, to_excel_bytes
 from playlist_builder.matcher import find_best_match
 from playlist_builder.parser import parse_lines
 from playlist_builder.sources import image_source, website_source
@@ -49,7 +50,7 @@ with st.sidebar:
 
 # --- Step 1: input ---------------------------------------------------------
 st.subheader("1. Choose a source")
-website_tab, image_tab = st.tabs(["🌐 Website", "🖼️ Screenshot"])
+website_tab, image_tab, excel_tab = st.tabs(["🌐 Website", "🖼️ Screenshot", "📊 Excel"])
 
 with website_tab:
     url = st.text_input("Playlist page URL", placeholder="https://example.com/best-songs-of-2025")
@@ -64,7 +65,7 @@ with website_tab:
 with image_tab:
     upload = st.file_uploader("Screenshot or photo of a playlist", type=["png", "jpg", "jpeg", "webp", "bmp"])
     if upload:
-        st.image(upload, use_container_width=True)
+        st.image(upload, width="stretch")
     if st.button("Extract songs from image", disabled=upload is None):
         try:
             with st.spinner("Reading text from image..."):
@@ -77,24 +78,34 @@ with image_tab:
                 "or set TESSERACT_CMD in .env to the full path of tesseract.exe."
             )
 
+with excel_tab:
+    st.caption("Upload a list exported from this app (or any sheet with a 'Spotify URI' or 'Spotify link' column) to skip matching.")
+    excel = st.file_uploader("Excel file", type=["xlsx"])
+    if st.button("Load playlist from Excel", disabled=excel is None):
+        try:
+            state.matches = from_excel(excel)
+            state.raw_text = ""
+        except ExcelFormatError as e:
+            st.error(str(e))
+        except Exception as e:
+            st.error(f"Couldn't read that file as Excel: {e}")
+
 # --- Step 2: review --------------------------------------------------------
-if not state.raw_text:
-    st.stop()
+if state.raw_text:
+    st.subheader("2. Review the song list")
+    st.caption("One song per line. Delete junk lines or fix OCR mistakes before matching.")
+    st.text_area("Songs", key="raw_text", height=250, label_visibility="collapsed")
+    queries = parse_lines(state.raw_text)
+    st.write(f"**{len(queries)}** entries detected.")
 
-st.subheader("2. Review the song list")
-st.caption("One song per line. Delete junk lines or fix OCR mistakes before matching.")
-st.text_area("Songs", key="raw_text", height=250, label_visibility="collapsed")
-queries = parse_lines(state.raw_text)
-st.write(f"**{len(queries)}** entries detected.")
-
-if st.button("Match on Spotify", type="primary", disabled=not queries):
-    progress = st.progress(0.0, text="Searching Spotify...")
-    matches = []
-    for i, query in enumerate(queries, 1):
-        matches.append((query, find_best_match(client, query).track))
-        progress.progress(i / len(queries), text=f"Searching Spotify... {i}/{len(queries)}")
-    progress.empty()
-    state.matches = matches
+    if st.button("Match on Spotify", type="primary", disabled=not queries):
+        progress = st.progress(0.0, text="Searching Spotify...")
+        matches = []
+        for i, query in enumerate(queries, 1):
+            matches.append((query, find_best_match(client, query).track))
+            progress.progress(i / len(queries), text=f"Searching Spotify... {i}/{len(queries)}")
+        progress.empty()
+        state.matches = matches
 
 # --- Step 3: results & create ----------------------------------------------
 if not state.matches:
@@ -113,8 +124,16 @@ st.dataframe(
         }
         for q, t in state.matches
     ],
-    use_container_width=True,
+    width="stretch",
     hide_index=True,
+)
+
+st.download_button(
+    "⬇️ Download as Excel",
+    data=to_excel_bytes(state.matches),
+    file_name="playlist.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    help="Re-import this file from the Excel tab to skip matching next time. Skipped rows can be filled in by hand.",
 )
 
 if found:
